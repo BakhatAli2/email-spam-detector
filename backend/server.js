@@ -1,5 +1,5 @@
 require('dotenv').config({ quiet: true });
-
+module.exports = app;
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
