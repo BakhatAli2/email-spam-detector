@@ -1,5 +1,5 @@
 require('dotenv').config({ quiet: true });
-module.exports = app;
+
 const express = require("express");
 const cors = require("cors");
 const mysql = require("mysql2");
@@ -15,9 +15,9 @@ const app = express();
 
 app.use(helmet());
 app.use(helmet.frameguard({ action: "deny" }));
-
 app.use(express.json({ limit: "10kb" }));
 
+// ✅ FIX 1: Use environment variable for CORS origin
 app.use(
   cors({
     origin: process.env.FRONTEND_URL || "http://localhost:3000",
@@ -25,11 +25,15 @@ app.use(
   })
 );
 
-/* 🚫 BLOCK DIRECT ACCESS (Only frontend allowed) */
+/* ✅ FIX 2: Origin check now uses environment variable */
 app.use((req, res, next) => {
   const origin = req.headers.origin;
+  const allowedOrigin = process.env.FRONTEND_URL || "http://localhost:3000";
 
-  if (!origin || origin !== "http://localhost:3000") {
+  // Allow requests with no origin (e.g. Postman, server-to-server)
+  if (!origin) return next();
+
+  if (origin !== allowedOrigin) {
     return res.status(403).json({
       success: false,
       error: "Access denied - Unauthorized origin",
@@ -57,16 +61,20 @@ const scanLimiter = rateLimit({
 
 /* =======================================================
    🗄️ DATABASE CONNECTION (MYSQL POOL)
+   ✅ FIX 3: Uses cloud DB environment variables (Railway)
 ======================================================= */
 
 const db = mysql.createPool({
-  host: process.env.DB_HOST || "localhost",
-  user: process.env.DB_USER || "root",
-  password: process.env.DB_PASSWORD || "",
-  database: process.env.DB_NAME || "spam_detector",
+  host: process.env.DB_HOST,
+  user: process.env.DB_USER,
+  password: process.env.DB_PASSWORD,
+  database: process.env.DB_NAME,
+  port: process.env.DB_PORT || 3306,
   waitForConnections: true,
   connectionLimit: 10,
   queueLimit: 0,
+  // ✅ FIX 4: Required for Railway/PlanetScale SSL
+  ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 });
 
 /* DB TEST CONNECTION */
@@ -227,7 +235,7 @@ app.post("/scan", scanLimiter, (req, res) => {
       "free", "winner", "lottery", "urgent", "money",
       "click here", "claim now", "bank", "password",
       "verify", "suspend", "login", "security",
-      "bitcoin", "gift card", "limited time"
+      "bitcoin", "gift card", "limited time",
     ];
 
     let spamScore = 0;
@@ -256,7 +264,7 @@ app.post("/scan", scanLimiter, (req, res) => {
     }
 
     /* ===================================================
-       🧠 SPAM TYPE CLASSIFICATION (AI LOGIC)
+       🧠 SPAM TYPE CLASSIFICATION
     =================================================== */
 
     let type = "Normal Email";
@@ -289,14 +297,10 @@ app.post("/scan", scanLimiter, (req, res) => {
     const sql =
       "INSERT INTO scan_logs (email_text, spam_score, status) VALUES (?, ?, ?)";
 
-    db.query(sql, [
-      cleanContent.substring(0, 500),
-      spamScore,
-      status
-    ]);
+    db.query(sql, [cleanContent.substring(0, 500), spamScore, status]);
 
     /* ===================================================
-       📤 FINAL RESPONSE (FRONTEND DASHBOARD READY)
+       📤 FINAL RESPONSE
     =================================================== */
 
     return res.json({
@@ -311,7 +315,6 @@ app.post("/scan", scanLimiter, (req, res) => {
           ? "Email is safe to open"
           : "⚠ This email looks suspicious!",
     });
-
   } catch (error) {
     console.error("Server Error:", error);
 
@@ -333,10 +336,16 @@ app.use((req, res) => {
 
 /* =======================================================
    🚀 START SERVER
+   ✅ FIX 5: Export app for Vercel serverless
 ======================================================= */
 
 const PORT = process.env.PORT || 5000;
 
-app.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`);
-});
+// Only listen when running locally, not on Vercel
+if (process.env.NODE_ENV !== "production") {
+  app.listen(PORT, () => {
+    console.log(`🚀 Server running on port ${PORT}`);
+  });
+}
+
+module.exports = app;
